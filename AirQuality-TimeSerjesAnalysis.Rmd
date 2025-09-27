@@ -1,0 +1,295 @@
+---
+title: "STAT 429 Project"
+author: "Quinn Nguyen"
+date: "2025-04-28"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# ANALYSIS A
+
+## 1. Preliminary Analysis
+
+```{r echo=FALSE, include=FALSE}
+# Cleaning data
+library(tidyverse)
+library(astsa)
+library(lubridate)
+library(TSA)
+library(fpp2)
+
+air_data <- read_delim("/Users/quynhnguyen/Desktop/Spring25/STAT429/Project/air+quality/AirQualityUCI.csv", 
+    delim = ";", escape_double = FALSE, 
+    col_types = cols(Date = col_date(format = "%d/%m/%Y"), 
+        Time = col_time(format = "%H.%M.%S")), 
+    trim_ws = TRUE)
+
+# Data cleaning
+air_data$Time <- gsub("\\.", ":", air_data$Time)
+air_data$`CO(GT)` <- gsub("\\,", ".", air_data$`CO(GT)`)
+air_data$`CO(GT)` <- as.numeric(air_data$`CO(GT)`)
+air_data$`C6H6(GT)` <- gsub("\\,", ".", air_data$`C6H6(GT)`)
+air_data$`C6H6(GT)` <- as.numeric(air_data$`C6H6(GT)`)
+air_data$T <- gsub("\\,", ".", air_data$T)
+air_data$T <- as.numeric(air_data$T)
+air_data$AH <- gsub("\\,", ".", air_data$AH)
+air_data$AH <- as.numeric(air_data$AH)
+
+air_data <- air_data[, 1:15] # drop last 2 empty columns
+air_data <- air_data %>% drop_na() # remove missing values
+air_data$Datetime <- ymd_hms(paste(air_data$Date, air_data$Time)) # new column
+
+my_data <- air_data %>% 
+  select(Datetime, `CO(GT)`, `PT08.S1(CO)`, `NMHC(GT)`, `C6H6(GT)`, 
+         `PT08.S2(NMHC)`, `NOx(GT)`, `PT08.S3(NOx)`,  `NO2(GT)`, 
+         `PT08.S4(NO2)`, `PT08.S5(O3)`, `T`, `RH`, `AH`) %>% 
+  filter(`CO(GT)` > -200 & `PT08.S1(CO)` > -200 & `NMHC(GT)` > -200 & `C6H6(GT)` > -200 
+         & `PT08.S2(NMHC)` > -200 & `NOx(GT)` > -200 & `PT08.S3(NOx)` > -200 &  `NO2(GT)` > -200 
+         & `PT08.S4(NO2)` > -200 & `PT08.S5(O3)` > -200 & `T` > -200 & `RH` > -200 & `AH`) # filter NAs
+airdata <- my_data %>% 
+  select(Datetime, `CO(GT)`, `NMHC(GT)`, `C6H6(GT)`, `T`) %>% 
+  drop_na() %>% 
+  rename(CO = `CO(GT)`, NMHC = `NMHC(GT)`, C6H6 = `C6H6(GT)`, temp = `T`)
+
+airdata$t_hours <- as.numeric(difftime(airdata$Datetime, min(airdata$Datetime), units = "hours"))
+
+#write.csv(airdata, "/Users/quynhnguyen/Desktop/Spring25/STAT429/Project/airdata.csv")
+```
+
+```{r echo=FALSE}
+# TS Plots
+par(mfrow=c(4,1))
+tsplot(airdata$Datetime, airdata$CO,
+       main = "Time Series of CO", ylab = "CO", col="skyblue")
+tsplot(airdata$Datetime, airdata$NMHC,
+       main = "Time Series of NMHC", ylab = "NMHC", col="lightpink")
+tsplot(airdata$Datetime, airdata$C6H6,
+       main = "Time Series of C6H6", ylab = "C6H6", col="darkorange")
+tsplot(airdata$Datetime, airdata$temp,
+       main = "Time Series of Temperature", ylab = "Temperature", col="darkgreen")
+
+## Histograms
+par(mfrow=c(2,2))
+hist(airdata$CO, main = "Histogram of CO",
+     xlab = "CO", col="skyblue")
+hist(airdata$NMHC, main = "Histogram of NMHC",
+     xlab = "NMHC", col="lightpink")
+hist(airdata$C6H6, main = "Histogram of C6H6",
+     xlab = "C6H6", col="darkorange")
+hist(airdata$temp, main = "Histogram of Temperature",
+     xlab = "Temperature", col="darkgreen")
+```
+Although there is some missing data gaps (flat lines) in the time series plots, the data seems to be stationary in general. There is no trend, no obvious patterns, and the variances seem fairly constant.  
+
+```{r echo=FALSE, include=FALSE}
+# This is further confirmed by Dickey-Fuller test below.
+library(tseries)
+adf.test(airdata$CO, alternative = "stationary")
+adf.test(airdata$NMHC, alternative = "stationary")
+adf.test(airdata$C6H6, alternative = "stationary")
+adf.test(airdata$temp, alternative = "stationary")
+
+# Transformation
+airdata$log_CO   <- log(airdata$CO)
+airdata$log_NMHC <- log(airdata$NMHC)
+airdata$log_C6H6 <- log(airdata$C6H6)
+
+```
+
+## 2. Multiple Linear Regression Analysis
+
+```{r echo=FALSE}
+# # MLR
+# airdata$t_hours <- as.numeric(difftime(airdata$Datetime, min(airdata$Datetime), units = "hours"))
+# air_lm <- lm(CO ~ t_hours + NMHC + C6H6 + temp, data=airdata)
+# summary(air_lm)
+
+# MLR after transformation
+air_lm_log <- lm(log_CO ~ t_hours + log_NMHC + log_C6H6 + temp, data=airdata)
+summary(air_lm_log)
+```
+Based on the regression model, we can see that all of the predictors are significant. 
+
+## 3. Regression model suggestions 
+### 3.1 Quadratic Model  
+
+```{r echo=FALSE}
+# # Quadratic Time Trend
+# air_quad_lm <- lm(CO ~ t_hours + I(t_hours^2) + NMHC + C6H6 + temp, data = airdata)
+# summary(air_quad_lm)
+
+# Quadratic Time Trend after transformation
+quad_lm_log <- lm(log_CO ~ t_hours + I(t_hours^2) + log_NMHC + log_C6H6 + temp, data = airdata)
+summary(quad_lm_log)
+```
+
+### 3.1 Lagged Model  
+
+```{r echo=FALSE}
+# Lagged model
+# Convert needed columns to ts format
+CO_ts <- ts(airdata$CO)
+t_ts <- ts(airdata$t_hours)
+NMHC_ts <- ts(airdata$NMHC)
+C6H6_ts <- ts(airdata$C6H6)
+temp_ts <- ts(airdata$temp)
+temp_lag2_ts <- ts(lag(airdata$temp, 2))
+
+air2 <- ts.intersect(CO = CO_ts, 
+                     t_hours = t_ts, 
+                     NMHC = NMHC_ts, 
+                     C6H6 = C6H6_ts, 
+                     temp = temp_ts, 
+                     temp_lag2 = temp_lag2_ts)
+
+lagged_mod <- lm(CO ~., data=air2)
+summary(lagged_mod)
+```
+## 4. Regression result analysis  
+### 4.1 Residual Diagnostics for Multiple Linear Regression Model  
+
+```{r echo=FALSE}
+## Original model
+# checkresiduals(air_lm, test="LB")
+
+## Original model after transformation
+checkresiduals(air_lm_log, test="LB")
+```
+
+### 4.2 Residual Diagnostics for Quadratic Model 
+
+```{r echo=FALSE}
+# ## Quadratic model
+# checkresiduals(air_quad_lm, test="LB")
+
+## Quadratic model after transformation
+checkresiduals(quad_lm_log, test="LB")
+```
+
+### 4.3 Residual Diagnostics for Lagged Model  
+
+```{r echo=FALSE}
+## Lagged model
+checkresiduals(lagged_mod, test="LB")
+```
+
+Residual analysis was conducted by plotting the residual time series, ACF, and histogram. Although the residuals fluctuate around zero and are approximately normally distributed, the ACF plot reveals significant autocorrelation at multiple lags. The Ljung-Box test further confirms autocorrelation with a p-value less than 0.05. Thus, the residuals do not behave like white noise, indicating that the model does not fully capture the serial correlation structure present in the data.
+
+## 5. Regression with autocorrelated errors
+```{r echo=FALSE}
+library(forecast)
+
+# ARIMA after transformation
+arima_log <- auto.arima(airdata$log_CO,
+                      xreg = cbind(airdata$t_hours, airdata$log_NMHC, airdata$log_C6H6, airdata$temp),
+                      seasonal=FALSE,
+                      stepwise=FALSE,
+                      approximation=FALSE)
+summary(arima_log)
+
+# Check residuals 
+checkresiduals(arima_log)
+```
+The results from the initial OLS regression model and residual diagnostics suggested significant autocorrelation. Since the assumption of independent errors in OLS is violated, a regression model that accounts for autocorrelation is needed. 
+
+## 6. Final Model Selection
+
+```{r echo=FALSE}
+# lst.mod = list(Original = air_lm, QuadModel = air_quad_lm, LaggedModel = lagged_mod, ARIMA = arima_mod)
+# print("AIC:")
+# sapply(lst.mod, AIC)
+# print("BIC:")
+# sapply(lst.mod, BIC)
+
+list.mod = list(Original = air_lm_log, QuadModel = quad_lm_log, ARIMA211 = arima_log)
+print("AIC:")
+sapply(list.mod, AIC)
+print("BIC:")
+sapply(list.mod, BIC)
+```
+The best model selected was ARIMA(4,0,0). This model showed the lowest AIC (-115.93) and significantly improved fit over earlier attempts. Since ARIMA(4,0,0) provides the most accurate representation of the data, it will be used for forecasting.
+
+## 7. Forecast future 5 values
+
+```{r echo=FALSE}
+# Use the last known values (naïve extension)
+library(forecast)
+last_vals <- tail(airdata, 1)
+future_xreg <- cbind((last_vals$t_hours + 1):(last_vals$t_hours + 5),
+                      rep(last_vals$log_NMHC, 5),
+                      rep(last_vals$log_C6H6, 5),
+                      rep(last_vals$temp, 5))
+
+forecast_5 <- forecast(arima_log, xreg = future_xreg, h = 5)
+forecast_5
+
+predicted_log_CO <- forecast_5$mean
+predicted_CO <- exp(predicted_log_CO)
+predicted_CO
+
+# Optionally: Get prediction intervals
+lower_CO <- exp(forecast_result$lower[,2])  # 95% lower bound
+upper_CO <- exp(forecast_result$upper[,2])  # 95% upper bound
+data.frame(
+  Forecast_LogCO = predicted_log_CO,
+  Forecast_CO = predicted_CO,
+  Lower95_CO = lower_CO,
+  Upper95_CO = upper_CO
+)
+
+```
+
+
+# ANALYSIS C
+## 1. Spectral Analysis
+```{r echo=FALSE}
+# Spectral Analysis
+co_ts <- ts(airdata$CO, frequency = 24)  # hourly data, daily cycle assumed
+plot(co_ts, main = "CO Concentration Over Time", ylab = "CO")
+spec_out <- mvspec(co_ts, spans = c(5,5), log = "no", main = "Spectral Density of CO") # Computes and plots the smoothed spectral density estimate
+
+spec_df <- data.frame(freq = spec_out$freq, spec = spec_out$spec)
+# Find the frequency with sthe highest spectral power (strongest repeating cycle)
+dominant_freq <- spec_df$freq[which.max(spec_df$spec)]
+# Convert frequency to period, tells you how often the dominant cycle repeats
+dominant_period <- 1 / dominant_freq 
+
+#  expect 24-hour cycles due to human behavior (rush hours, industrial activity)
+
+cat("Dominant Frequency:", dominant_freq, "\n")
+cat("Dominant Period:", round(dominant_period, 2), "hours")
+
+```
+The time series plot of CO concentration over time shows sharp spikes and regular fluctuations. We can see:
+- Repeating peaks -> possible daily cycles
+- The amplitude of fluctuations is quite high at times (CO values reaching above 8)
+- There’s no clear long-term trend, but there’s strong short-term variability
+
+The spectral density plot has some sharp peaks, meaning that there are certain frequencies dominate the variation in CO levels. This is evidence that the time series has repeating behavior at specific intervals. 
+
+Dominant frequency is around 0.14, or a 7.2-hour period. This means CO concentration tends to rise and fall in a roughly 7-hour cycle, and this cycle repeats multiple times per day. This is very likely related to human activity patterns: morning rush hour, lunchtime, and evening traffic. In cities, pollution often spikes 2–3 times daily, and this analysis supports that with data.
+
+## 2. ARCH Model
+
+```{r echo=FALSE}
+resid_sq <- residuals(air_lm)^2
+acf(resid_sq, main = "ACF of Squared Residuals") 
+
+library(fGarch)
+
+# Fit AR(1)-GARCH(1,1), t model to CO series
+garch_fit <- garchFit(~ arma(1, 0) + garch(1, 1), data = airdata$CO, cond.dist = "std")
+summary(garch_fit)
+
+# Plots
+par(mfrow = c(2, 2))
+plot(garch_fit, which = c(9, 2, 10, 13))
+```
+
+
+ACF plot shows significant autocorrelation in the squared residuals — many lags exceed the confidence bounds, especially large spikes at early lags (lag 1, 2, 3...).
